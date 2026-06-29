@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 내 시간표: 로그인한 사용자가 '자기 것'만 읽고 쓸 수 있음
+    match /timetables/{docId} {
+      // 새로 만들 때: 로그인 상태이고, 저장하는 uid가 본인일 것
+      allow create: if request.auth != null
+                    && request.resource.data.uid == request.auth.uid;
+      // 읽기/수정/삭제: 그 문서의 주인일 때만
+      allow read, update, delete: if request.auth != null
+                    && resource.data.uid == request.auth.uid;
+    }
+  }
+}

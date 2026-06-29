@@ -12,6 +12,40 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="생활계획표">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
+<!-- Firebase SDK (로그인 + 클라우드 저장) -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword,
+           createUserWithEmailAndPassword, signOut, onAuthStateChanged }
+    from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import { getFirestore, collection, doc, addDoc, getDoc, getDocs, setDoc,
+           deleteDoc, query, where, orderBy, serverTimestamp }
+    from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyB-9i2s9oOjBddLDR-48H98CS4QAp60gGU",
+    authDomain: "chronos-planner-4a289.firebaseapp.com",
+    projectId: "chronos-planner-4a289",
+    storageBucket: "chronos-planner-4a289.firebasestorage.app",
+    messagingSenderId: "51115429386",
+    appId: "1:51115429386:web:9e330464b4b8362cbfd9f3"
+  };
+
+  const fbApp = initializeApp(firebaseConfig);
+  const auth = getAuth(fbApp);
+  const db = getFirestore(fbApp);
+
+  // 앱 메인 스크립트에서 쓸 수 있도록 window에 노출
+  window.FB = {
+    auth, db,
+    GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword,
+    createUserWithEmailAndPassword, signOut, onAuthStateChanged,
+    collection, doc, addDoc, getDoc, getDocs, setDoc, deleteDoc,
+    query, where, orderBy, serverTimestamp
+  };
+  // 준비 완료 신호
+  window.dispatchEvent(new Event("firebase-ready"));
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <style>
@@ -283,6 +317,49 @@
     font-family:inherit;transition:.2s;
   }
   #installBtn:hover{background:var(--accent-deep);}
+  /* 로그인 영역 */
+  .auth-btn{
+    border:1px solid var(--line);background:var(--input-bg);color:var(--ink);
+    padding:9px 14px;border-radius:999px;font-size:13px;font-weight:700;cursor:pointer;
+    font-family:inherit;transition:.2s;
+  }
+  .auth-btn:hover{border-color:var(--accent);color:var(--accent);}
+  .auth-btn.ghost{margin-left:6px;}
+  .user-chip{
+    display:inline-block;background:var(--accent);color:#fff;border-radius:999px;
+    padding:8px 14px;font-size:13px;font-weight:700;
+  }
+  /* 클라우드 목록 */
+  .cloud-list{display:flex;flex-direction:column;gap:10px;}
+  .cloud-card{
+    display:flex;gap:10px;align-items:center;padding:8px;border:1px solid var(--line-soft);
+    border-radius:10px;background:var(--input-bg);
+  }
+  .cloud-card img{width:54px;height:54px;border-radius:8px;object-fit:cover;flex:none;background:#fff;border:1px solid var(--line-soft);}
+  .cloud-card .ci{flex:1;min-width:0;}
+  .cloud-card .ct{font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .cloud-card .cd{font-size:11.5px;color:#9a8b70;margin-top:2px;}
+  .cloud-card .cbtns{display:flex;gap:4px;flex:none;}
+  .cloud-card button{
+    border:0;border-radius:7px;padding:6px 9px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit;
+  }
+  .cloud-card .load{background:var(--accent);color:#fff;}
+  .cloud-card .del{background:var(--input-bg);color:#d66;border:1px solid #e0a0a0;}
+
+  /* 로그인 모달 */
+  .login-tabs{display:flex;gap:6px;margin-bottom:14px;}
+  .login-tabs button{
+    flex:1;border:1px solid var(--line);background:var(--input-bg);border-radius:9px;
+    padding:9px 0;font-size:13.5px;font-weight:700;cursor:pointer;color:#7a6c53;font-family:inherit;
+  }
+  .login-tabs button.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+  .google-btn{
+    width:100%;display:flex;align-items:center;justify-content:center;gap:10px;
+    border:1px solid var(--line);background:#fff;color:#3c4043;border-radius:10px;
+    padding:12px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:14px;
+  }
+  .google-btn:hover{background:#f7f7f7;}
+  .login-divider{text-align:center;color:#9a8b70;font-size:12px;margin:6px 0 14px;}
 
   /* 주간 표 */
   .week-wrap{max-width:1040px;margin:0 auto;padding:16px;}
@@ -342,6 +419,13 @@
   </div>
   <button id="darkToggle" title="야간/주간 화면 전환">🌙 야간 모드</button>
   <button id="installBtn" title="홈 화면에 앱처럼 설치" style="display:none;">📲 앱 설치</button>
+  <div id="authArea" style="margin-top:12px;">
+    <button id="loginBtn" class="auth-btn">🔑 로그인 / 회원가입</button>
+    <span id="userArea" style="display:none;">
+      <span id="userName" class="user-chip"></span>
+      <button id="logoutBtn" class="auth-btn ghost">로그아웃</button>
+    </span>
+  </div>
 </header>
 
 <div class="wrap" id="circleView">
@@ -459,6 +543,18 @@
       </div>
     </div>
 
+    <div class="panel box" id="cloudPanel">
+      <h3>☁️ 내 시간표 (클라우드) <span class="sub" id="cloudCount"></span></h3>
+      <p class="sub" id="cloudHint" style="margin:0 0 10px;">로그인하면 시간표를 클라우드에 저장하고 어느 기기에서나 꺼내 쓸 수 있어요.</p>
+      <div id="cloudLoggedIn" style="display:none;">
+        <div class="field">
+          <input type="text" id="cloudTitle" placeholder="시간표 제목 (예: 다니엘 여름방학)">
+        </div>
+        <button class="btn btn-primary" id="cloudSaveBtn" style="margin-bottom:10px;">지금 시간표를 클라우드에 저장</button>
+        <div id="cloudList" class="cloud-list"></div>
+      </div>
+    </div>
+
     <div class="panel box">
       <h3>💾 저장 / 인쇄</h3>
       <div class="btn-row" style="margin-bottom:8px;">
@@ -502,6 +598,33 @@
 
 <!-- 주간 원형 인쇄 전용 영역 (평소 숨김) -->
 <div id="weekPrintArea"></div>
+
+<!-- 로그인 / 회원가입 모달 -->
+<div class="modal-bg" id="loginModal">
+  <div class="modal">
+    <h3 id="loginTitle">로그인</h3>
+    <button class="google-btn" id="googleLoginBtn">
+      <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+      구글 계정으로 계속하기
+    </button>
+    <div class="login-divider">또는 이메일로</div>
+    <div class="login-tabs">
+      <button data-ltab="login" class="active">로그인</button>
+      <button data-ltab="signup">회원가입</button>
+    </div>
+    <div class="field">
+      <label>이메일</label>
+      <input type="text" id="loginEmail" placeholder="example@email.com" autocomplete="username">
+    </div>
+    <div class="field">
+      <label>비밀번호 <span class="sub">(6자 이상)</span></label>
+      <input type="password" id="loginPw" placeholder="비밀번호" autocomplete="current-password">
+    </div>
+    <div id="loginError" style="color:#d66;font-size:12.5px;margin-bottom:10px;display:none;"></div>
+    <button class="btn btn-primary" id="emailAuthBtn">로그인</button>
+    <button class="btn btn-ghost" id="loginCancel" style="margin-top:8px;">닫기</button>
+  </div>
+</div>
 
 <!-- 조각 편집 모달 -->
 <div class="modal-bg" id="modal">
@@ -2059,8 +2182,233 @@ document.getElementById("importFile").addEventListener("change",e=>{
   rd.readAsText(f);
 });
 
-/* ===================== 초기화 ===================== */
-loadAuto();                 // 브라우저에 저장된 내용 복구
+/* ===================== Firebase: 로그인 + 클라우드 저장 ===================== */
+let currentUser = null;
+let authMode = "login";
+
+function fbReady(cb){
+  if(window.FB) cb();
+  else window.addEventListener("firebase-ready", cb, {once:true});
+}
+
+// 로그인 모달의 UI(탭 전환 등)는 Firebase와 무관하게 항상 동작하도록 분리
+(function setupLoginUI(){
+  const loginModal=document.getElementById("loginModal");
+  if(!loginModal) return;
+  document.getElementById("loginBtn").addEventListener("click",()=>{
+    loginModal.classList.add("show");
+    const el=document.getElementById("loginError"); el.style.display="none";
+  });
+  document.getElementById("loginCancel").addEventListener("click",()=>loginModal.classList.remove("show"));
+  loginModal.addEventListener("click",e=>{ if(e.target===loginModal) loginModal.classList.remove("show"); });
+  document.querySelectorAll("#loginModal .login-tabs button").forEach(b=>{
+    b.addEventListener("click",()=>{
+      authMode=b.dataset.ltab;
+      document.querySelectorAll("#loginModal .login-tabs button").forEach(x=>x.classList.remove("active"));
+      b.classList.add("active");
+      document.getElementById("emailAuthBtn").textContent = authMode==="login"?"로그인":"회원가입";
+      document.getElementById("loginTitle").textContent = authMode==="login"?"로그인":"회원가입";
+      const el=document.getElementById("loginError"); el.style.display="none";
+    });
+  });
+})();
+
+function showLoginError(msg){
+  const el=document.getElementById("loginError");
+  if(!el) return;
+  el.textContent=msg; el.style.display=msg?"block":"none";
+}
+
+// Firebase SDK가 일정 시간 내 로드되지 않으면(오프라인 등) 안내
+setTimeout(()=>{
+  if(!window.FB){
+    const ge=document.getElementById("googleLoginBtn");
+    const ea=document.getElementById("emailAuthBtn");
+    if(ge && ea && !window.FB){
+      const warn=()=>showLoginError("인터넷에 연결되어 있어야 로그인할 수 있어요. 연결을 확인하고 새로고침해 주세요.");
+      ge.addEventListener("click",warn);
+      ea.addEventListener("click",warn);
+    }
+  }
+}, 4000);
+
+// 작은 미리보기 PNG(dataURL) 생성 — 현재 활성 요일 시계
+function makeThumbnail(){
+  return new Promise((resolve)=>{
+    try{
+      const clone=svg.cloneNode(true);
+      clone.setAttribute("width",240); clone.setAttribute("height",240);
+      clone.setAttribute("viewBox","-90 -70 580 580");
+      const data=new XMLSerializer().serializeToString(clone);
+      const blob=new Blob([data],{type:"image/svg+xml;charset=utf-8"});
+      const url=URL.createObjectURL(blob);
+      const img=new Image();
+      img.onload=()=>{
+        const c=document.createElement("canvas"); c.width=240; c.height=240;
+        const ctx=c.getContext("2d");
+        ctx.fillStyle="#fffdf8"; ctx.fillRect(0,0,240,240);
+        ctx.drawImage(img,0,0,240,240);
+        URL.revokeObjectURL(url);
+        resolve(c.toDataURL("image/jpeg",0.6));
+      };
+      img.onerror=()=>resolve("");
+      img.src=url;
+    }catch(e){ resolve(""); }
+  });
+}
+
+// 저장할 상태(JSON) — undo 스택 등 제외
+function exportStateForCloud(){
+  const clean=JSON.parse(JSON.stringify(state));
+  return clean;
+}
+
+function fmtDate(ts){
+  try{
+    const d= ts && ts.toDate ? ts.toDate() : new Date(ts);
+    return `${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,"0")}.${String(d.getDate()).padStart(2,"0")} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+  }catch(e){ return ""; }
+}
+
+fbReady(()=>{
+  const F=window.FB;
+
+  // 로그인 상태 감지
+  F.onAuthStateChanged(F.auth, (user)=>{
+    currentUser=user;
+    const loginBtn=document.getElementById("loginBtn");
+    const userArea=document.getElementById("userArea");
+    const loggedIn=document.getElementById("cloudLoggedIn");
+    const hint=document.getElementById("cloudHint");
+    if(user){
+      loginBtn.style.display="none";
+      userArea.style.display="inline";
+      document.getElementById("userName").textContent = (user.displayName || user.email || "사용자") + " 님";
+      loggedIn.style.display="block";
+      hint.style.display="none";
+      loadCloudList();
+    }else{
+      loginBtn.style.display="inline-block";
+      userArea.style.display="none";
+      loggedIn.style.display="none";
+      hint.style.display="block";
+      document.getElementById("cloudList").innerHTML="";
+      document.getElementById("cloudCount").textContent="";
+    }
+  });
+
+  const loginModal=document.getElementById("loginModal");
+
+  function friendlyError(code){
+    const m={
+      "auth/invalid-email":"이메일 형식이 올바르지 않아요.",
+      "auth/missing-password":"비밀번호를 입력해주세요.",
+      "auth/weak-password":"비밀번호는 6자 이상이어야 해요.",
+      "auth/email-already-in-use":"이미 가입된 이메일이에요. 로그인해 주세요.",
+      "auth/invalid-credential":"이메일 또는 비밀번호가 맞지 않아요.",
+      "auth/user-not-found":"가입되지 않은 이메일이에요.",
+      "auth/wrong-password":"비밀번호가 맞지 않아요.",
+      "auth/popup-closed-by-user":"로그인 창이 닫혔어요."
+    };
+    return m[code] || "문제가 생겼어요. 잠시 후 다시 시도해주세요.";
+  }
+
+  // 구글 로그인
+  document.getElementById("googleLoginBtn").addEventListener("click",async ()=>{
+    try{
+      await F.signInWithPopup(F.auth, new F.GoogleAuthProvider());
+      loginModal.classList.remove("show");
+    }catch(e){ showLoginError(friendlyError(e.code)); }
+  });
+
+  // 이메일 로그인/회원가입
+  document.getElementById("emailAuthBtn").addEventListener("click",async ()=>{
+    const email=document.getElementById("loginEmail").value.trim();
+    const pw=document.getElementById("loginPw").value;
+    if(!email || !pw){ showLoginError("이메일과 비밀번호를 입력해주세요."); return; }
+    try{
+      if(authMode==="login") await F.signInWithEmailAndPassword(F.auth,email,pw);
+      else await F.createUserWithEmailAndPassword(F.auth,email,pw);
+      loginModal.classList.remove("show");
+    }catch(e){ showLoginError(friendlyError(e.code)); }
+  });
+
+  // 로그아웃
+  document.getElementById("logoutBtn").addEventListener("click",()=>F.signOut(F.auth));
+
+  // 클라우드에 저장
+  document.getElementById("cloudSaveBtn").addEventListener("click",async ()=>{
+    if(!currentUser) return;
+    const title=document.getElementById("cloudTitle").value.trim() || (state.title||"제목 없는 시간표");
+    const btn=document.getElementById("cloudSaveBtn");
+    btn.disabled=true; btn.textContent="저장 중...";
+    try{
+      const thumb=await makeThumbnail();
+      await F.addDoc(F.collection(F.db,"timetables"),{
+        uid: currentUser.uid,
+        title,
+        data: JSON.stringify(exportStateForCloud()),
+        thumb,
+        createdAt: F.serverTimestamp()
+      });
+      document.getElementById("cloudTitle").value="";
+      await loadCloudList();
+    }catch(e){
+      alert("저장에 실패했어요. 인터넷 연결을 확인해주세요.");
+    }
+    btn.disabled=false; btn.textContent="지금 시간표를 클라우드에 저장";
+  });
+
+  // 클라우드 목록 불러오기
+  window.loadCloudList = async function(){
+    if(!currentUser) return;
+    const listEl=document.getElementById("cloudList");
+    listEl.innerHTML=`<p class="sub">불러오는 중...</p>`;
+    try{
+      const q=F.query(F.collection(F.db,"timetables"), F.where("uid","==",currentUser.uid));
+      const snap=await F.getDocs(q);
+      const items=[];
+      snap.forEach(d=>items.push({id:d.id, ...d.data()}));
+      items.sort((a,b)=>{
+        const ta=a.createdAt&&a.createdAt.toDate?a.createdAt.toDate().getTime():0;
+        const tb=b.createdAt&&b.createdAt.toDate?b.createdAt.toDate().getTime():0;
+        return tb-ta;
+      });
+      document.getElementById("cloudCount").textContent = items.length?`(${items.length}개)`:"";
+      if(!items.length){ listEl.innerHTML=`<p class="sub">아직 저장한 시간표가 없어요.</p>`; return; }
+      listEl.innerHTML="";
+      items.forEach(it=>{
+        const card=document.createElement("div");
+        card.className="cloud-card";
+        card.innerHTML=`
+          ${it.thumb?`<img src="${it.thumb}" alt="">`:`<div style="width:54px;height:54px;border-radius:8px;background:var(--paper-deep);"></div>`}
+          <div class="ci">
+            <div class="ct"></div>
+            <div class="cd">${fmtDate(it.createdAt)}</div>
+          </div>
+          <div class="cbtns">
+            <button class="load">열기</button>
+            <button class="del">×</button>
+          </div>`;
+        card.querySelector(".ct").textContent=it.title||"제목 없음";
+        card.querySelector(".load").addEventListener("click",()=>{
+          if(state.days && Object.values(state.days).some(a=>a.length) && !confirm("현재 시간표를 덮어쓰고 이걸 불러올까요?")) return;
+          try{ applyLoadedState(JSON.parse(it.data)); }catch(e){ alert("불러오기에 실패했어요."); }
+        });
+        card.querySelector(".del").addEventListener("click",async ()=>{
+          if(!confirm(`"${it.title||"제목 없음"}"을(를) 삭제할까요?`)) return;
+          try{ await F.deleteDoc(F.doc(F.db,"timetables",it.id)); await loadCloudList(); }
+          catch(e){ alert("삭제에 실패했어요."); }
+        });
+        listEl.appendChild(card);
+      });
+    }catch(e){
+      listEl.innerHTML=`<p class="sub">목록을 불러오지 못했어요. 인터넷 연결을 확인해주세요.</p>`;
+    }
+  };
+});
+
+/* ===================== 초기화 ===================== */loadAuto();                 // 브라우저에 저장된 내용 복구
 buildThemeSeg();
 buildSwatches();
 buildSuggestCats();
