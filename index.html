@@ -62,6 +62,7 @@
     --clock-bg:#fffaf0; --clock-num:#8a7c63; --center-fill:#fffdf8;
     --panel-bg:#fffdf8; --bg-grad1:#fbf7ee; --bg-grad2:#f0e7d4;
     --input-bg:#fff;
+    --outer-ring:#ece1cc;
   }
   body.dark{
     --ink:#e8e2d6; --paper:#1e1c1a; --paper-deep:#2a2724;
@@ -71,6 +72,7 @@
     --clock-bg:#262320; --clock-num:#b0a48c; --center-fill:#201e1b;
     --panel-bg:#262320; --bg-grad1:#222019; --bg-grad2:#1a1814;
     --input-bg:#2e2a26;
+    --outer-ring:#3a352f;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   html,body{margin:0;padding:0;}
@@ -162,6 +164,13 @@
   .half-tags{
     display:flex;justify-content:center;gap:18px;margin-top:6px;font-size:12px;color:#8a7c63;
   }
+  .zoom-bar{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:8px;}
+  .zoom-bar button{
+    border:1px solid var(--line);background:var(--input-bg);color:var(--ink);
+    border-radius:8px;padding:6px 11px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;
+  }
+  .zoom-bar button:hover{border-color:var(--accent);}
+  .zoom-bar #zoomLabel{font-size:12.5px;color:#8a7c63;min-width:42px;text-align:center;font-weight:700;}
 
   /* 사이드 */
   .side{display:flex;flex-direction:column;gap:18px;}
@@ -453,7 +462,13 @@
       <div class="half-tags" id="halfTags" style="display:none;">
         <span>🌅 왼쪽 = 오전</span><span>🌙 오른쪽 = 오후</span>
       </div>
-      <div class="hint">빈 곳을 드래그하면 새 시간 · 만든 조각을 드래그하면 위치 이동 · 짧게 누르면 수정</div>
+      <div class="zoom-bar print-hide">
+        <button id="zoomOut" title="축소">➖</button>
+        <span id="zoomLabel">100%</span>
+        <button id="zoomIn" title="확대">➕</button>
+        <button id="zoomReset" title="원래 크기">⟳ 초기화</button>
+      </div>
+      <div class="hint">빈 곳을 드래그하면 새 시간 · 바깥 띠를 드래그해도 입력돼요 · 두 손가락으로 확대 · 짧게 누르면 수정</div>
     </div>
   </section>
 
@@ -1090,6 +1105,8 @@ function render24(){
   html+=`<defs><marker id="arw" markerWidth="8" markerHeight="8" refX="5.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#5a4f3d"/></marker>`;
   html+=`<pattern id="emptyHatch" width="7" height="7" patternTransform="rotate(45)" patternUnits="userSpaceOnUse"><rect width="7" height="7" fill="#efe7d6" opacity="0.5"/><line x1="0" y1="0" x2="0" y2="7" stroke="#d8cbb0" stroke-width="2"/></pattern></defs>`;
   // 바탕 원
+  // 바깥 드래그 입력 링 (좁은 구간도 넓은 띠에서 조작)
+  html+=`<circle cx="${CX}" cy="${CY}" r="${(OUTER_R1()+OUTER_R2())/2}" fill="none" stroke="var(--outer-ring)" stroke-width="${OUTER_R2()-OUTER_R1()}" stroke-linecap="round" opacity="0.55"/>`;
   html+=`<circle cx="${CX}" cy="${CY}" r="${R}" fill="var(--clock-bg)" stroke="var(--line)" stroke-width="1.5"/>`;
   // 빈 시간 표시 (활동이 없는 구간을 빗금/흐리게)
   if(state.showEmpty){
@@ -1188,8 +1205,13 @@ function render24(){
   // 드래그 미리보기 (생성 모드만)
   if(drag.active && drag.mode==='create'){
     html+=`<path d="${arcPath(drag.start,drag.cur,R,R_IN)}" fill="${pendingColor}" opacity=".5" stroke="#fff" stroke-width="2" pointer-events="none"/>`;
+    if(drag.outer){
+      // 바깥 링 위에도 진하게 표시
+      html+=`<path d="${arcPath(drag.start,drag.cur,OUTER_R2(),OUTER_R1())}" fill="${pendingColor}" opacity=".8" stroke="#fff" stroke-width="1.5" pointer-events="none"/>`;
+    }
   }
   svg.innerHTML=html;
+  applyViewBox();
   // 조각 탭/이동은 startDrag~endDrag에서 처리(중복 모달 방지)
   finishRender();
 }
@@ -1216,6 +1238,8 @@ function render12(){
 
   [0,1].forEach(half=>{
     const cx = half===0?cxAM:cxPM;
+    // 바깥 입력 링
+    html+=`<circle cx="${cx}" cy="${cyy}" r="${rr+32}" fill="none" stroke="var(--outer-ring)" stroke-width="26" opacity="0.55"/>`;
     // 바탕 원
     html+=`<circle cx="${cx}" cy="${cyy}" r="${rr}" fill="var(--clock-bg)" stroke="var(--line)" stroke-width="1.5"/>`;
     // 빈 시간
@@ -1272,6 +1296,7 @@ function render12(){
     html+=`<path d="${halfArcPath(drag.half,ls,le,rr,rin)}" fill="${pendingColor}" opacity=".5" stroke="#fff" stroke-width="2" pointer-events="none"/>`;
   }
   svg.innerHTML=html;
+  applyViewBox();
   finishRender();
 }
 
@@ -1493,24 +1518,49 @@ document.getElementById("weekCirclePrintBtn").addEventListener("click",()=>{
 // mode: 'create'(빈 곳에서 시작) | 'move'(기존 조각 위에서 시작)
 let drag={active:false,mode:null,start:0,cur:0,moved:false,
           segId:null,segLen:0,grabOffset:0,moveStart:0};
-const VB={x:-90,y:-70,w:580,h:580};
+// 기본 viewBox + 줌/팬 상태
+const BASE_VB={x:-90,y:-70,w:580,h:580};
+let zoom=1, panX=0, panY=0;          // zoom>1이면 확대
+const ZOOM_MIN=1, ZOOM_MAX=3;
+// 바깥 드래그 입력 링 반경 (R 바깥)
+const OUTER_R1=()=>R+22, OUTER_R2=()=>R+50;
+
+function curVB(){
+  const w=BASE_VB.w/zoom, h=BASE_VB.h/zoom;
+  // 중심 기준 확대 + 팬
+  const cx=BASE_VB.x+BASE_VB.w/2 + panX;
+  const cy=BASE_VB.y+BASE_VB.h/2 + panY;
+  return {x:cx-w/2, y:cy-h/2, w, h};
+}
+function applyViewBox(){
+  const v=curVB();
+  svg.setAttribute("viewBox",`${v.x} ${v.y} ${v.w} ${v.h}`);
+}
 function svgPoint(evt){
   const rect=svg.getBoundingClientRect();
   const t=evt.touches?evt.touches[0]:evt;
-  const x=VB.x+(t.clientX-rect.left)/rect.width*VB.w;
-  const y=VB.y+(t.clientY-rect.top)/rect.height*VB.h;
+  const v=curVB();
+  const x=v.x+(t.clientX-rect.left)/rect.width*v.w;
+  const y=v.y+(t.clientY-rect.top)/rect.height*v.h;
   return {x,y};
 }
+// 안쪽 도넛 영역
 function inRing(x,y){
   const d=Math.hypot(x-CX,y-CY);
   return d>=R_IN-10 && d<=R+18;
+}
+// 바깥 입력 링 영역
+function inOuterRing(x,y){
+  const d=Math.hypot(x-CX,y-CY);
+  return d>=OUTER_R1()-6 && d<=OUTER_R2()+8;
 }
 // 12시간제: 화면좌표가 어느 반원인지 + 그 안의 24시간 기준 분
 function pickHalf(x,y){
   const {rr,rin,cyy,cxAM,cxPM}=halfCircles();
   for(const [half,cx] of [[0,cxAM],[1,cxPM]]){
     const d=Math.hypot(x-cx,y-cyy);
-    if(d>=rin-12 && d<=rr+16){
+    // 안쪽 도넛 + 바깥 입력 링 모두 허용
+    if((d>=rin-12 && d<=rr+16) || (d>=rr+18 && d<=rr+46)){
       let deg=Math.atan2(y-cyy,x-cx)*180/Math.PI;
       let a=deg+90; a=((a%360)+360)%360;
       const local=(a/360)*720;
@@ -1535,10 +1585,11 @@ function evtToMin(evt){
   const {x,y}=svgPoint(evt);
   if(state.mode===12){
     const p=pickHalf(x,y);
-    return p?{min:p.min, half:p.half}:null;
+    return p?{min:p.min, half:p.half, outer:false}:null;
   }
-  if(!inRing(x,y)) return null;
-  return {min:angleToMin(pointAngle(x,y)), half:null};
+  const outer=inOuterRing(x,y);
+  if(!inRing(x,y) && !outer) return null;
+  return {min:angleToMin(pointAngle(x,y)), half:null, outer};
 }
 function startDrag(evt){
   const r=evtToMin(evt);
@@ -1546,14 +1597,15 @@ function startDrag(evt){
   evt.preventDefault();
   const rawMin=((Math.round(r.min)%DAY)+DAY)%DAY;
   const min=snapMin(rawMin)%DAY;
-  const hit=segAtMin(rawMin);
+  // 바깥 링에서 시작하면 항상 '새 구간 그리기' (좁은 구간 조작 편의)
+  const hit = r.outer ? null : segAtMin(rawMin);
   if(hit){
     let off=((rawMin-hit.start)%DAY+DAY)%DAY;
-    drag={active:true,mode:'move',start:min,cur:min,moved:false,half:r.half,
+    drag={active:true,mode:'move',start:min,cur:min,moved:false,half:r.half,outer:false,
           segId:hit.id,segLen:segLen(hit),grabOffset:off,moveStart:hit.start,
           preSnap:snapshotDays()};
   }else{
-    drag={active:true,mode:'create',start:min,cur:min,moved:false,half:r.half,
+    drag={active:true,mode:'create',start:min,cur:min,moved:false,half:r.half,outer:!!r.outer,
           segId:null,segLen:0,grabOffset:0,moveStart:0,preSnap:snapshotDays()};
   }
 }
@@ -1644,12 +1696,105 @@ function resolveOverlap(newSeg){
   });
   state.days[state.activeDay]=result;
 }
+// 마우스: 기존 드래그 그대로
 svg.addEventListener("mousedown",startDrag);
 window.addEventListener("mousemove",moveDrag);
 window.addEventListener("mouseup",endDrag);
-svg.addEventListener("touchstart",startDrag,{passive:false});
-svg.addEventListener("touchmove",moveDrag,{passive:false});
-window.addEventListener("touchend",endDrag);
+
+// 터치: 1손가락=드래그, 2손가락=핀치 줌/패닝
+let pinch=null; // {dist, cx, cy, startZoom, startPanX, startPanY}
+function touchDist(t1,t2){ return Math.hypot(t1.clientX-t2.clientX, t1.clientY-t2.clientY); }
+function touchMid(t1,t2){ return {x:(t1.clientX+t2.clientX)/2, y:(t1.clientY+t2.clientY)/2}; }
+
+svg.addEventListener("touchstart",(e)=>{
+  if(e.touches.length>=2){
+    // 핀치 시작: 진행 중이던 한손가락 드래그 취소
+    if(drag.active){ drag.active=false; drag.mode=null; render(); }
+    e.preventDefault();
+    pinch={dist:touchDist(e.touches[0],e.touches[1]), mid:touchMid(e.touches[0],e.touches[1]),
+           startZoom:zoom, startPanX:panX, startPanY:panY};
+  }else{
+    startDrag(e);
+  }
+},{passive:false});
+
+svg.addEventListener("touchmove",(e)=>{
+  if(pinch && e.touches.length>=2){
+    e.preventDefault();
+    const nd=touchDist(e.touches[0],e.touches[1]);
+    let nz=pinch.startZoom * (nd/pinch.dist);
+    nz=Math.max(ZOOM_MIN,Math.min(ZOOM_MAX,nz));
+    zoom=nz;
+    // 두 손가락 중심 이동만큼 패닝(화면→viewBox 비례)
+    const rect=svg.getBoundingClientRect();
+    const nm=touchMid(e.touches[0],e.touches[1]);
+    const v=curVB();
+    panX = pinch.startPanX - (nm.x-pinch.mid.x)/rect.width*v.w;
+    panY = pinch.startPanY - (nm.y-pinch.mid.y)/rect.height*v.h;
+    clampPan();
+    updateZoomLabel();
+    applyViewBox();
+  }else if(!pinch){
+    moveDrag(e);
+  }
+},{passive:false});
+
+window.addEventListener("touchend",(e)=>{
+  if(pinch){
+    if(e.touches.length<2) pinch=null;
+    return;
+  }
+  endDrag(e);
+});
+
+// 마우스 휠로도 확대(데스크탑 편의)
+svg.addEventListener("wheel",(e)=>{
+  e.preventDefault();
+  const delta = e.deltaY<0 ? 1.12 : 0.89;
+  setZoom(zoom*delta);
+},{passive:false});
+
+function clampPan(){
+  // 확대 안 했으면 팬 없음
+  if(zoom<=1){ panX=0; panY=0; return; }
+  const v=curVB();
+  const maxX=(BASE_VB.w - v.w)/2;
+  const maxY=(BASE_VB.h - v.h)/2;
+  panX=Math.max(-maxX,Math.min(maxX,panX));
+  panY=Math.max(-maxY,Math.min(maxY,panY));
+}
+function setZoom(z){
+  zoom=Math.max(ZOOM_MIN,Math.min(ZOOM_MAX,z));
+  if(zoom<=1){ panX=0; panY=0; }
+  clampPan(); updateZoomLabel(); applyViewBox();
+}
+function updateZoomLabel(){
+  const el=document.getElementById("zoomLabel");
+  if(el) el.textContent=Math.round(zoom*100)+"%";
+}
+document.getElementById("zoomIn").addEventListener("click",()=>setZoom(zoom+0.25));
+document.getElementById("zoomOut").addEventListener("click",()=>setZoom(zoom-0.25));
+document.getElementById("zoomReset").addEventListener("click",()=>setZoom(1));
+
+// 확대 상태에서 마우스로 빈 영역 끌어 이동(패닝): 링 밖을 누르면 팬
+let panDrag=null;
+svg.addEventListener("mousedown",(e)=>{
+  if(zoom<=1) return;
+  const {x,y}=svgPoint(e);
+  const d=Math.hypot(x-CX,y-CY);
+  // 입력 링/도넛이 아닌 바깥 빈 공간을 누르면 패닝
+  if(d>OUTER_R2()+10){
+    panDrag={sx:e.clientX, sy:e.clientY, px:panX, py:panY};
+  }
+});
+window.addEventListener("mousemove",(e)=>{
+  if(!panDrag) return;
+  const rect=svg.getBoundingClientRect(); const v=curVB();
+  panX=panDrag.px - (e.clientX-panDrag.sx)/rect.width*v.w;
+  panY=panDrag.py - (e.clientY-panDrag.sy)/rect.height*v.h;
+  clampPan(); applyViewBox();
+});
+window.addEventListener("mouseup",()=>{ panDrag=null; });
 
 function uid(){return Math.random().toString(36).slice(2,9);}
 
