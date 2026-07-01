@@ -1664,13 +1664,60 @@ function endDrag(){
   }
   // 생성 모드
   let len=((drag.cur-drag.start)%DAY+DAY)%DAY;
-  if(!moved || len<state.snap/2){ render(); return; }
+
+  // (1) 거의 클릭(드래그 안 함): 그 지점이 속한 빈 구간 전체를 잡기
+  if(!moved || len<state.snap/2){
+    const clickMin=((drag.start%DAY)+DAY)%DAY;
+    const gap=gapContaining(clickMin);
+    if(gap && (gap.len>=state.snap)){
+      commitPreSnap();
+      const seg={id:uid(),start:gap.start,end:(gap.start+gap.len)%DAY,name:"",color:pendingColor,icon:""};
+      state.days[state.activeDay].push(seg);
+      render();
+      openModal(seg,true);
+      return;
+    }
+    render(); return;
+  }
+
+  // (2) 드래그한 구간이 기존 활동과 겹치는지 확인
+  const overlapInfo = overlapNames(drag.start, drag.cur);
+  if(overlapInfo.count>0){
+    const ok = confirm(`이 시간대에 이미 "${overlapInfo.names}"이(가) 있어요.\n덮어쓸까요?`);
+    if(!ok){ render(); return; }  // 취소: 아무것도 안 함(기존 보호)
+  }
+  // (3) 채우기 (빈 곳이거나 사용자가 덮어쓰기 허락)
   commitPreSnap();
   const seg={id:uid(),start:drag.start,end:drag.cur,name:"",color:pendingColor,icon:""};
   resolveOverlap(seg);
   state.days[state.activeDay].push(seg);
   render();
   openModal(seg,true);
+}
+// 특정 분이 속한 빈 구간 {start,len} 반환 (없으면 null)
+function gapContaining(min){
+  const m=((min%DAY)+DAY)%DAY;
+  const gaps=findGaps(state.days[state.activeDay]);
+  for(const g of gaps){
+    let s=g.start, e=g.end===0?DAY:g.end;
+    let len=((e-s)%DAY+DAY)%DAY; if(len===0)len=DAY;
+    // 구간이 자정을 넘는 경우 포함 처리
+    for(let i=0;i<len;i++){ if((s+i)%DAY===m) return {start:s, len}; }
+  }
+  return null;
+}
+// 시작~끝 구간이 덮는 기존 활동들의 이름 모음
+function overlapNames(start,end){
+  let len=((end-start)%DAY+DAY)%DAY; if(len===0)len=DAY;
+  const taken=new Set();
+  for(let i=0;i<len;i++) taken.add((start+i)%DAY);
+  const names=[];
+  state.days[state.activeDay].forEach(s=>{
+    let sl=segLen(s), hit=false;
+    for(let i=0;i<sl;i++){ if(taken.has((s.start+i)%DAY)){ hit=true; break; } }
+    if(hit) names.push(s.name||"이름 없는 활동");
+  });
+  return {count:names.length, names:names.slice(0,3).join(", ")+(names.length>3?" 등":"")};
 }
 // 새 조각 newSeg가 차지하는 분들을 기존 조각에서 비워줌(겹침 제거) — DAY 기준
 function resolveOverlap(newSeg){
@@ -1753,6 +1800,45 @@ svg.addEventListener("wheel",(e)=>{
   const delta = e.deltaY<0 ? 1.12 : 0.89;
   setZoom(zoom*delta);
 },{passive:false});
+
+/* ===== 호버 미리보기: 커서 위치의 시:분 표시 ===== */
+let hoverEl=null;
+function ensureHoverEl(){
+  if(hoverEl && document.body.contains(hoverEl)) return hoverEl;
+  hoverEl=document.createElement("div");
+  hoverEl.id="hoverTip";
+  hoverEl.style.cssText="position:fixed;z-index:60;pointer-events:none;display:none;"
+    +"background:var(--accent);color:#fff;font-size:12.5px;font-weight:700;"
+    +"padding:5px 9px;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.25);"
+    +"white-space:nowrap;transform:translate(-50%,-130%);font-family:inherit;";
+  document.body.appendChild(hoverEl);
+  return hoverEl;
+}
+function hoverTimeAt(evt){
+  const {x,y}=svgPoint(evt);
+  let min=null;
+  if(state.mode===12){
+    const p=pickHalf(x,y);
+    if(p) min=p.min;
+  }else{
+    if(inRing(x,y)||inOuterRing(x,y)) min=angleToMin(pointAngle(x,y));
+  }
+  return min;
+}
+svg.addEventListener("mousemove",(e)=>{
+  if(drag.active||panDrag||pinch) { const el=ensureHoverEl(); el.style.display="none"; return; }
+  const min=hoverTimeAt(e);
+  const el=ensureHoverEl();
+  if(min==null){ el.style.display="none"; return; }
+  const snapped=((snapMin(min)%DAY)+DAY)%DAY;
+  const seg=segAtMin(snapped);
+  el.textContent = fmt(snapped) + (seg? " · "+(seg.name||"활동 있음") : " · 빈 시간");
+  el.style.background = seg ? "#9a8b70" : "var(--accent)";
+  el.style.left=e.clientX+"px";
+  el.style.top=e.clientY+"px";
+  el.style.display="block";
+});
+svg.addEventListener("mouseleave",()=>{ if(hoverEl) hoverEl.style.display="none"; });
 
 function clampPan(){
   // 확대 안 했으면 팬 없음
